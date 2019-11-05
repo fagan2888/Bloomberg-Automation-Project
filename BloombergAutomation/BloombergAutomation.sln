@@ -1,0 +1,23 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.29424.173
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "BloombergAutomation", "BloombergAutomation\BloombergAutomation.pyproj", "{BDA8FE31-5224-4AC7-B1E7-0D9BC2951B04}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{BDA8FE31-5224-4AC7-B1E7-0D9BC2951B04}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BDA8FE31-5224-4AC7-B1E7-0D9BC2951B04}.Release|Any CPU.ActiveCfg = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6FC30784-0504-4C46-8747-3F19DF2C8765}
+	EndGlobalSection
+EndGlobal
