@@ -1,0 +1,10 @@
+{
+    "sourcedatapathstart":"C:/Bloomberg/Input/",
+    "bloombergfields":[],
+    "bloombergoverridefields":
+    {
+        "leg1":[],
+        "leg2":[]
+    },
+    "outputdatapathstart":"C:/Bloomberg/Output/"
+}

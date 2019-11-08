@@ -1,0 +1,962 @@
+// file : Program.cs
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Configuration;
+using System.IO;
+using System.Xml;
+
+namespace PortfolioValuation
+{
+    // CLIENT
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            try
+            {
+                // build static configurations from pre-defined configuration files for each portfolio
+                Configurations.Build(new XMLConfigurationBuilder());
+                //
+                // build swap manager object from a given file information
+                PortfolioProcessorBuilder swapManagerBuilder = new FileProcessorBuilder();
+                PortfolioProcessor swapManager = swapManagerBuilder.Build();
+                //
+                // process and print portfolio
+                swapManager.Process();
+                swapManager.Print();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.Message);
+            }
+            Console.WriteLine("Program has been executed");
+            Console.ReadLine();
+        }
+    }
+}
+//
+//
+// file : PortfolioProcessorBuilder.cs
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Configuration;
+
+namespace PortfolioValuation
+{
+    // builder for swap manager object - class hierarchy
+    public abstract class PortfolioProcessorBuilder
+    {
+        public abstract PortfolioProcessor Build();
+    }
+    // build data for swap manager object using source files
+    public class FileProcessorBuilder : PortfolioProcessorBuilder
+    {
+        public override PortfolioProcessor Build()
+        {
+            // build portfolio and visitor objects based on configurations
+            List<Portfolio> portfolios = new List<Portfolio>();
+            List<PortfolioVisitor> visitors = new List<PortfolioVisitor>();
+            //
+            // loop through configurations
+            for (int i = 0; i < Configurations.N; i++)
+            {
+                // get one configuration, create portfolio object and
+                // read source data (isin codes) for this portfolio
+                Configuration table = Configurations.Get(i);
+                string ID = table.ID;
+                Portfolio portfolio = new Portfolio(ID);
+                List<string> sourceData = new List<string>();
+                TextFileHandler.Read(table.Get("sourcedatafilepathname"), sourceData);
+                //
+                // create empty contracts into portfolio
+                char fieldSeparator = Convert.ToChar(Configurations.Get(ID, "fieldseparator"));
+                sourceData.ForEach(it =>
+                {
+                    if (it.Split(Convert.ToChar(fieldSeparator))[0] == ID)
+                        portfolio.AddContract(new Contract(it.Split(fieldSeparator)[1]));
+                });
+                //
+                // decision : portfolio must have at least one contract
+                if (portfolio.Count() == 0) throw new Exception("builder : empty portfolio error");
+                //
+                // request visitor for swap manager object, created by factory method
+                PortfolioOutputVisitorFactory factory = new PortfolioOutputVisitorFactory();
+                string visitorType = table.Get("visitortype");
+                PortfolioVisitor visitor = factory.CreatePortfolioOutputVisitor(visitorType);
+                portfolios.Add(portfolio);
+                visitors.Add(visitor);
+            }
+            // return constructed swap manager objects for a client
+            return new PortfolioProcessor(portfolios, visitors);
+        }
+    }
+}
+//
+//
+// file : PortfolioProcessor.cs
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace PortfolioValuation
+{
+    public class PortfolioProcessor
+    {
+        private BBCOMMDataRequest bloombergAPI;
+        private List<PortfolioVisitor> visitors;
+        private List<Portfolio> portfolios;
+        private List<string> securities;
+        private List<string> bloombergFields;
+        private List<string> bloombergOverrideFields;
+        private List<string> bloombergOverrideValues;
+        //
+        public PortfolioProcessor(List<Portfolio> portfolios, List<PortfolioVisitor> visitors)
+        {
+            this.portfolios = portfolios;
+            this.visitors = visitors;
+        }
+        public void Process()
+        {
+            // process all portfolios
+            foreach (Portfolio portfolio in portfolios)
+            {
+                // create information for Bloomberg API
+                string ID = portfolio.ID;
+                char fieldSeparator = Convert.ToChar(Configurations.Get(ID, "fieldseparator"));
+                securities = portfolio.Select(it => it.Isin).ToList();
+                //
+                bloombergFields = Configurations.Get(ID, "bloombergfields").Split(fieldSeparator).ToList<string>();
+                bloombergOverrideFields = Configurations.Get(ID, "bloombergoverridefields").Split(fieldSeparator).ToList<string>();
+                bloombergOverrideValues = Configurations.Get(ID, "bloombergoverridevalues").Split(fieldSeparator).ToList<string>();
+                //
+                // decision : override collections always has to be provided
+                if ((bloombergOverrideFields == null) || (bloombergOverrideValues == null))
+                    throw new Exception("swap manager : null override collection error");
+                //
+                // create reference data request for Bloomberg API
+                if ((bloombergOverrideFields.Count != 0) && (bloombergOverrideValues.Count != 0))
+                {
+                    // data request with overrides
+                    bloombergAPI = new ReferenceDataRequest(securities, bloombergFields, bloombergOverrideFields, bloombergOverrideValues);
+                }
+                else
+                {
+                    // data request without overrides
+                    bloombergAPI = new ReferenceDataRequest(securities, bloombergFields);
+                }
+                // receive requested data
+                dynamic[, ,] result = bloombergAPI.ProcessData();
+                //
+                // process bloomberg results into portfolio contracts and fields
+                int nFields = bloombergFields.Count;
+                int nSecurities = securities.Count;
+                for (int i = 0; i < nSecurities; i++)
+                {
+                    for (int j = 0; j < nFields; j++)
+                    {
+                        Field field = new Field(bloombergFields[j], result[i, 0, j]);
+                        portfolio.UpdateContract(securities[i], field);
+                    }
+                }
+            }
+        }
+        public void Print()
+        {
+            // delegate accept requests for portfolio objects
+            for (int i = 0; i < portfolios.Count; i++)
+            {
+                portfolios[i].AcceptVisitor(visitors[i]);
+            }
+        }
+    }
+}
+//
+//
+// file : TextFileHandler.cs
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.IO;
+
+namespace PortfolioValuation
+{
+    public static class TextFileHandler
+    {
+        public static void Read(string filePathName, List<string> output)
+        {
+            // read file content into list
+            StreamReader reader = new StreamReader(filePathName);
+            while (!reader.EndOfStream)
+            {
+                output.Add(reader.ReadLine());
+            }
+            reader.Close();
+        }
+        public static void Write(string filePathName, List<string> input, bool append)
+        {
+            // write text stream list to file
+            StreamWriter writer = new StreamWriter(filePathName, append);
+            input.ForEach(it => writer.WriteLine(it));
+            writer.Close();
+        }
+    }
+}
+//
+//
+// file : PortfolioVisitor.cs
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Configuration;
+
+namespace PortfolioValuation
+{
+    // output visitor - class hierarchy
+    public abstract class PortfolioVisitor
+    {
+        public abstract void Visit(Portfolio portfolio);
+    }
+    public class ConsolePortfolioVisitor : PortfolioVisitor
+    {
+        public override void Visit(Portfolio portfolio)
+        {
+            //Configuration configuration
+            foreach (Contract contract in portfolio)
+            {
+                string fieldSeparator = Configurations.Get(portfolio.ID, "fieldseparator");
+                StringBuilder sb = new StringBuilder();
+                foreach (Field f in contract)
+                {
+                    sb.Append(f.Value);
+                    sb.Append(fieldSeparator);
+                }
+                // print the content of string builder into console
+                Console.WriteLine(sb.ToString());
+            }
+        }
+    }
+    public class FilePortfolioVisitor : PortfolioVisitor
+    {
+        public override void Visit(Portfolio portfolio)
+        {
+            // extract filePathName for a given portfolio from configuration table
+            string fieldSeparator = Configurations.Get(portfolio.ID, "fieldseparator");
+            List<string> resultDataFilePathNames = Configurations.Get(portfolio.ID, "resultdatafilepathname").Split(Convert.ToChar(fieldSeparator)).ToList();
+            List<string> portfolioIDs = Configurations.Get(portfolio.ID, "portfolioid").Split(Convert.ToChar(fieldSeparator)).ToList();
+            string resultDataFilePathName = null;
+            for (int i = 0; i < portfolioIDs.Count; i++)
+            {
+                if(portfolioIDs[i] == portfolio.ID)
+                {
+                    resultDataFilePathName = resultDataFilePathNames[i];
+                    break;
+                }
+            }
+            List<string> fileOutputList = new List<string>();
+            StringBuilder sb = new StringBuilder();
+            //
+            foreach (Contract contract in portfolio)
+            {
+                // add all fields into string builder object
+                foreach (Field f in contract)
+                {
+                    sb.Append(f.Value);
+                    sb.Append(fieldSeparator);
+                }
+                // add constructed string into output list and clear string builder
+                fileOutputList.Add(sb.ToString());
+                sb.Clear();
+            }
+            // print the content of output list into file
+            TextFileHandler.Write(resultDataFilePathName, fileOutputList, false);
+        }
+    }
+}
+//
+//
+// file : PortfolioConfiguration.cs
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace PortfolioValuation
+{
+    public class PortfolioConfiguration
+    {
+        // private member data
+        public readonly string ID;
+        private Dictionary<string, string> configurationTable = new Dictionary<string, string>();
+        //
+        public PortfolioConfiguration(string ID)
+        {
+            this.ID = ID;
+        }
+        // add key-value pair
+        public void Add(string key, string value)
+        {
+            // decision : configuration table cannot contain two identical keys
+            if (configurationTable.ContainsKey(key))
+                throw new Exception("configuration table : duplicate key error");
+            configurationTable.Add(key, value);
+        }
+        // get value for a given key
+        public string Get(string key)
+        {
+            // decision : value for a given key cannot be returnde if it does not exist
+            if (!configurationTable.ContainsKey(key))
+                throw new Exception("configuration table : invalid key error");
+            return configurationTable[key];
+        }
+        // clear all key-value pairs
+        public void Clear()
+        {
+            // clear all configurations
+            configurationTable.Clear();
+        }
+    }
+}
+//
+//
+// file : Portfolio.cs
+using System;
+using System.Collections.Generic;
+using System.Collections;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace PortfolioValuation
+{
+    public class Portfolio : IEnumerable<Contract>
+    {
+        // private member data
+        public readonly string ID;
+        private List<Contract> contracts;
+        //
+        // ctor
+        public Portfolio(string ID)
+        {
+            this.ID = ID;
+            contracts = new List<Contract>();
+        }
+        // add one contract into list of contracts
+        public void AddContract(Contract contract)
+        {
+            // decision : portfolio cannot contain two identical contracts
+            if(contracts.Exists(it => it.Isin == contract.Isin))
+                throw new Exception("portfolio : duplicate contract error");
+            contracts.Add(contract);
+        }
+        // update existing contract in list of contracts
+        public void UpdateContract(string isin, Field field)
+        {
+            // contract cannot be updated if it does not exist
+            if (!contracts.Exists(it => it.Isin == isin))
+                throw new Exception("portfolio : update contract error");
+            //
+            for (int i = 0; i < contracts.Count; i++)
+            {
+                if (contracts[i].Isin == isin)
+                {
+                    contracts[i].AddField(field);
+                    break;
+                }
+            }
+        }
+        // implementation for generic IEnumerable
+        public IEnumerator<Contract> GetEnumerator()
+        {
+            foreach (Contract contract in contracts)
+            {
+                yield return contract;
+            }
+        }
+        // implementation for non-generic IEnumerable
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return GetEnumerator();
+        }
+        // implementation method for visitor pattern
+        public void AcceptVisitor(PortfolioVisitor visitor)
+        {
+            // send this-object (portfolio) for visitor implementation
+            visitor.Visit(this);
+        }
+    }
+}
+//
+//
+// file : PortfolioOutputVisitorFactory.cs
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace PortfolioValuation
+{
+    public class PortfolioOutputVisitorFactory
+    {
+        // create output visitor
+        public PortfolioVisitor CreatePortfolioOutputVisitor(string visitorType)
+        {
+            // HARD-CODED selection of output visitors
+            // add new visitor type into switch branch and write 
+            // implementation into visitor class hierarchy
+            PortfolioVisitor visitor = null;
+            switch (visitorType)
+            {
+                case "console":
+                    visitor = new ConsolePortfolioVisitor();
+                    break;
+                case "file":
+                    visitor = new FilePortfolioVisitor();
+                    break;
+                default:
+                    throw new Exception("factory : undefined visitor error");
+            }
+            return visitor;
+        }
+    }
+}
+//
+//
+// file : Field.cs
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace PortfolioValuation
+{
+    public class Field
+    {
+        // private data and read-only accessors
+        private KeyValuePair<string, dynamic> kvp;
+        public string Key { get { return kvp.Key; } }
+        public dynamic Value { get { return kvp.Value; } }
+        //
+        // ctor
+        public Field(string key, dynamic value)
+        {
+            kvp = new KeyValuePair<string, dynamic>(key, value);
+        }
+    }
+}
+//
+//
+// file : Contract.cs
+using System;
+using System.Collections.Generic;
+using System.Collections;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace PortfolioValuation
+{
+    public class Contract : IEnumerable<Field>
+    {
+        // private data and read-only accessor
+        private string isin;
+        private List<Field> fields;
+        public string Isin { get { return isin; } }
+        //
+        // ctor
+        public Contract(string isin)
+        {
+            this.isin = isin;
+            fields = new List<Field>();
+        }
+        // add one field into list of fields
+        public void AddField(Field field)
+        {
+            // decision : contract cannot contain two identical fields
+            if (fields.Exists(it => it.Key == field.Key))
+                throw new Exception("contract : duplicate field error");
+            fields.Add(field);
+        }
+        // implementation for generic IEnumerable
+        public IEnumerator<Field> GetEnumerator()
+        {
+            foreach (Field field in fields)
+            {
+                yield return field;
+            }
+        }
+        // implementation for non-generic IEnumerable
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return GetEnumerator();
+        }
+    }
+}
+//
+//
+// file : Configurations.cs
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace PortfolioValuation
+{
+    // static wrapper class for all configurations
+    public static class Configurations
+    {
+        // static members and accessors
+        private static int n;
+        public static int N { get { return Configurations.n; } }
+        private static List<Configuration> tables = null;
+        //
+        // ctor
+        public static void Build(ConfigurationBuilder builder)
+        {
+            tables = builder.Build();
+            n = tables.Count;
+        }
+        public static string Get(string ID, string key)
+        {
+            string value = null;
+            foreach (Configuration table in tables)
+            {
+                if (table.ID == ID)
+                {
+                    value = table.Get(key);
+                    break;
+                }
+            }
+            return value;
+        }
+        public static Configuration Get(int index)
+        {
+            return tables[index];
+        }
+    }
+}
+//
+//
+// file : ConfigurationBuilder.cs
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Xml;
+using System.Xml.Linq;
+using System.IO;
+using System.Configuration;
+
+namespace PortfolioValuation
+{
+    // class hierarchy for configuration builder
+    public abstract class ConfigurationBuilder
+    {
+        public abstract List<Configuration> Build();
+    }
+    public class XMLConfigurationBuilder : ConfigurationBuilder
+    {
+        private string folderPath;
+        private List<Configuration> configurations;
+        public XMLConfigurationBuilder()
+        {
+            // read path to source folder containing configurations for all portfolios directly from system configuration file
+            this.folderPath = ConfigurationManager.AppSettings["PortfolioConfigurationsFolder"].ToString();
+            configurations = new List<Configuration>();
+        }
+        public override List<Configuration> Build()
+        {
+            foreach (string filePathName in Directory.GetFiles(folderPath))
+            {
+                XDocument database = XDocument.Load(filePathName);
+                Dictionary<string, string> pairs = database.Descendants("configuration")
+                    .Elements().ToDictionary(r => r.Attribute("key").Value.ToString(),
+                    r => r.Attribute("value").Value.ToString());
+                configurations.Add(new Configuration(pairs["portfolioid"], pairs));
+            }
+            return configurations;
+        }
+    }
+}
+//
+//
+// file : Configuration.cs
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace PortfolioValuation
+{
+    public class Configuration
+    {
+        public readonly string ID;
+        private Dictionary<string, string> pairs;
+        //
+        // ctor
+        public Configuration(string ID, Dictionary<string, string> pairs)
+        {
+            this.ID = ID;
+            this.pairs = pairs;
+        }
+        // accessor method
+        public string Get(string key)
+        {
+            // decision : value for a given key cannot be returned if it does not exist
+            if (!pairs.ContainsKey(key))
+                throw new Exception("configuration : invalid key error"); 
+            return this.pairs[key];
+        }
+    }
+}
+//
+//
+// file : BBCOMMWrapper.cs
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using BBCOMM = Bloomberglp.Blpapi;
+
+namespace PortfolioValuation
+{
+    // enumerators for historical data request settings
+    public enum E_PRICING_OPTION { PRICING_OPTION_PRICE, PRICING_OPTION_YIELD };
+    public enum E_PERIODICITY_ADJUSTMENT { ACTUAL, CALENDAR, FISCAL };
+    public enum E_PERIODICITY_SELECTION { DAILY, WEEKLY, MONTHLY, QUARTERLY, SEMI_ANNUALLY, YEARLY };
+    public enum E_NON_TRADING_DAY_FILL_OPTION { NON_TRADING_WEEKDAYS, ALL_CALENDAR_DAYS, ACTIVE_DAYS_ONLY };
+    public enum E_NON_TRADING_DAY_FILL_METHOD { PREVIOUS_VALUE, NIL_VALUE };
+    //
+    // abstract base class for data request
+    public abstract class BBCOMMDataRequest
+    {
+        // BBCOMM names
+        protected readonly BBCOMM.Name SECURITY_DATA = new BBCOMM.Name("securityData");
+        protected readonly BBCOMM.Name FIELD_DATA = new BBCOMM.Name("fieldData");
+        protected readonly BBCOMM.Name FIELD_ID = new BBCOMM.Name("fieldId");
+        protected readonly BBCOMM.Name VALUE = new BBCOMM.Name("value");
+        protected readonly BBCOMM.Name OVERRIDES = new BBCOMM.Name("overrides");
+        protected readonly BBCOMM.Name SECURITIES = new BBCOMM.Name("securities");
+        protected readonly BBCOMM.Name FIELDS = new BBCOMM.Name("fields");
+        protected readonly BBCOMM.Name SEQUENCE_NUMBER = new BBCOMM.Name("sequenceNumber");
+        protected readonly BBCOMM.Name START_DATE = new BBCOMM.Name("startDate");
+        protected readonly BBCOMM.Name END_DATE = new BBCOMM.Name("endDate");
+        protected readonly BBCOMM.Name DATE = new BBCOMM.Name("date");
+        protected readonly BBCOMM.Name PRICING_OPTION = new BBCOMM.Name("pricingOption");
+        protected readonly BBCOMM.Name PERIODICITY_ADJUSTMENT = new BBCOMM.Name("periodicityAdjustment");
+        protected readonly BBCOMM.Name PERIODICITY_SELECTION = new BBCOMM.Name("periodicitySelection");
+        protected readonly BBCOMM.Name NON_TRADING_DAY_FILL_OPTION = new BBCOMM.Name("nonTradingDayFillOption");
+        protected readonly BBCOMM.Name NON_TRADING_DAY_FILL_METHOD = new BBCOMM.Name("nonTradingDayFillMethod");
+        protected readonly BBCOMM.Name OVERRIDE_CURRENCY = new BBCOMM.Name("currency");
+        //
+        // const strings, enumerators, etc.
+        protected readonly string NOT_AVAILABLE = "#N/A";
+        protected readonly string SESSION_EXCEPTION = "Session not started";
+        protected readonly string SERVICE_EXCEPTION = "Service not opened";
+        protected readonly string REQUEST_TYPE_REFERENCE = "ReferenceDataRequest";
+        protected readonly string REQUEST_TYPE_HISTORICAL = "HistoricalDataRequest";
+        protected readonly string REFERENCE_DATA_SERVICE = "//blp/refdata";
+        protected readonly string BLOOMBERG_DATE_FORMAT = "yyyyMMdd";
+        protected E_PRICING_OPTION pricingOption;
+        protected E_PERIODICITY_ADJUSTMENT periodicityAdjustment;
+        protected E_PERIODICITY_SELECTION periodicitySelection;
+        protected E_NON_TRADING_DAY_FILL_OPTION nonTradingDayFillOption;
+        protected E_NON_TRADING_DAY_FILL_METHOD nonTradingDayFillMethod;
+        protected string requestType;
+        protected string startDate;
+        protected string endDate;
+        protected string overrideCurrency;
+        //
+        // wrapped BBCOMM objects
+        protected BBCOMM.Session session;
+        protected BBCOMM.Service service;
+        protected BBCOMM.Request request;
+        //
+        // input data structures
+        protected List<string> securityNames = new List<string>();
+        protected List<string> fieldNames = new List<string>();
+        protected List<string> overrideFields = new List<string>();
+        protected List<string> overrideValues = new List<string>();
+        //
+        // output result data structure
+        protected dynamic[, ,] result;
+        //
+        public dynamic[, ,] ProcessData()
+        {
+            Open();
+            CreateRequest();
+            SendRequest();
+            Close();
+            return result;
+        }
+        private void Open()
+        {
+            // create and start bloomberg BBCOMM session
+            BBCOMM.SessionOptions sessionOptions = new BBCOMM.SessionOptions();
+            session = new BBCOMM.Session(sessionOptions);
+            if (!session.Start()) throw new Exception(SESSION_EXCEPTION);
+            //
+            // get service from session object and create request by service object
+            if (!session.OpenService(REFERENCE_DATA_SERVICE)) throw new Exception(SERVICE_EXCEPTION);
+            service = session.GetService(REFERENCE_DATA_SERVICE);
+            request = service.CreateRequest(requestType);
+        }
+        private void CreateRequest()
+        {
+            // append securities, fields
+            foreach (string securityName in securityNames) request.Append(SECURITIES, securityName);
+            foreach (string fieldName in fieldNames) request.Append(FIELDS, fieldName);
+            //
+            // conditionally, append overrides into request object
+            if (overrideFields.Count > 0)
+            {
+                BBCOMM.Element requestOverrides = request.GetElement(OVERRIDES);
+                for (int i = 0; i < overrideFields.Count; i++)
+                {
+                    BBCOMM.Element requestOverride = requestOverrides.AppendElement();
+                    requestOverride.SetElement(FIELD_ID, overrideFields[i]);
+                    requestOverride.SetElement(VALUE, overrideValues[i]);
+                }
+            }
+            // set optional parameters for historical data request
+            if (requestType == REQUEST_TYPE_HISTORICAL)
+            {
+                request.Set(START_DATE, startDate);
+                request.Set(END_DATE, endDate);
+                request.Set(PRICING_OPTION, pricingOption.ToString());
+                request.Set(PERIODICITY_ADJUSTMENT, periodicityAdjustment.ToString());
+                request.Set(PERIODICITY_SELECTION, periodicitySelection.ToString());
+                request.Set(NON_TRADING_DAY_FILL_OPTION, nonTradingDayFillOption.ToString());
+                request.Set(NON_TRADING_DAY_FILL_METHOD, nonTradingDayFillMethod.ToString());
+                if (overrideCurrency != String.Empty) request.Set(OVERRIDE_CURRENCY, overrideCurrency);
+            }
+        }
+        private void SendRequest()
+        {
+            // send constructed request to BBCOMM server
+            long ID = Guid.NewGuid().GetHashCode();
+            session.SendRequest(request, new BBCOMM.CorrelationID(ID));
+            bool isProcessing = true;
+            //
+            while (isProcessing)
+            {
+                // receive data response from BBCOMM server, send 
+                // response to be processed by sub-classed algorithm
+                BBCOMM.Event response = session.NextEvent();
+                switch (response.Type)
+                {
+                    case BBCOMM.Event.EventType.PARTIAL_RESPONSE:
+                        ProcessDataResponse(ref response);
+                        break;
+                    case BBCOMM.Event.EventType.RESPONSE:
+                        ProcessDataResponse(ref response);
+                        isProcessing = false;
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+        private void Close()
+        {
+            // close BBCOMM session
+            if (session != null) session.Stop();
+        }
+        //
+        // sub-classes are providing specific algorithm implementations for 
+        // processing and packing BBCOMM server response data into resulting data structure
+        protected abstract void ProcessDataResponse(ref BBCOMM.Event response);
+    }
+    //
+    // concrete class implementation for processing reference data request
+    public class ReferenceDataRequest : BBCOMMDataRequest
+    {
+        public ReferenceDataRequest(List<string> bloombergSecurityNames,
+            List<string> bloombergFieldNames)
+        {
+            // ctor : create reference data request without field overrides
+            requestType = REQUEST_TYPE_REFERENCE;
+            securityNames = bloombergSecurityNames;
+            fieldNames = bloombergFieldNames;
+            //
+            // define result data structure dimensions for reference data request
+            result = new dynamic[securityNames.Count, 1, fieldNames.Count];
+        }
+        public ReferenceDataRequest(List<string> bloombergSecurityNames,
+            List<string> bloombergFieldNames, List<string> bloombergOverrideFields,
+            List<string> bloombergOverrideValues)
+        {
+            // ctor : create reference data request with field overrides
+            requestType = REQUEST_TYPE_REFERENCE;
+            securityNames = bloombergSecurityNames;
+            fieldNames = bloombergFieldNames;
+            overrideFields = bloombergOverrideFields;
+            overrideValues = bloombergOverrideValues;
+            //
+            // define result data structure dimensions for reference data request
+            result = new dynamic[securityNames.Count, 1, fieldNames.Count];
+        }
+        protected override void ProcessDataResponse(ref BBCOMM.Event response)
+        {
+            // receive response, which contains N securities and M fields
+            // event queue can send multiple responses for large requests
+            foreach (BBCOMM.Message message in response.GetMessages())
+            {
+                // extract N securities
+                BBCOMM.Element securities = message.GetElement(SECURITY_DATA);
+                int nSecurities = securities.NumValues;
+                //
+                // loop through all securities
+                for (int i = 0; i < nSecurities; i++)
+                {
+                    // extract one security and fields for this security
+                    BBCOMM.Element security = securities.GetValueAsElement(i);
+                    BBCOMM.Element fields = security.GetElement(FIELD_DATA);
+                    int sequenceNumber = security.GetElementAsInt32(SEQUENCE_NUMBER);
+                    int nFieldNames = fieldNames.Count;
+                    //
+                    // loop through all M fields for this security
+                    for (int j = 0; j < nFieldNames; j++)
+                    {
+                        // if the requested field has been found, pack value into result data structure
+                        if (fields.HasElement(fieldNames[j]))
+                        {
+                            result[sequenceNumber, 0, j] = fields.GetElement(fieldNames[j]).GetValue();
+                        }
+                        // otherwise, pack NOT_AVAILABLE string into data structure
+                        else
+                        {
+                            result[sequenceNumber, 0, j] = NOT_AVAILABLE;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    //
+    // concrete class implementation for processing historical data request
+    public class HistoricalDataRequest : BBCOMMDataRequest
+    {
+        private bool hasDimensions = false;
+        //
+        // optional parameters are configured to retrieve time-series having actual daily observations, including all weekdays,
+        // in the case of non-trading days the previous date value will be used.
+        public HistoricalDataRequest(List<string> bloombergSecurityNames, List<string> bloombergFieldNames,
+            DateTime bloombergStartDate, DateTime BloombergEndDate,
+            E_PRICING_OPTION bloombergPricingOption = E_PRICING_OPTION.PRICING_OPTION_PRICE,
+            E_PERIODICITY_SELECTION bloombergPeriodicitySelection = E_PERIODICITY_SELECTION.DAILY,
+            E_PERIODICITY_ADJUSTMENT bloombergPeriodicityAdjustment = E_PERIODICITY_ADJUSTMENT.ACTUAL,
+            E_NON_TRADING_DAY_FILL_OPTION bloombergNonTradingDayFillOption = E_NON_TRADING_DAY_FILL_OPTION.ALL_CALENDAR_DAYS,
+            E_NON_TRADING_DAY_FILL_METHOD bloombergNonTradingDayFillMethod = E_NON_TRADING_DAY_FILL_METHOD.PREVIOUS_VALUE,
+            string bloombergOverrideCurrency = "")
+        {
+            // ctor : create historical data request without field overrides
+            requestType = REQUEST_TYPE_HISTORICAL;
+            securityNames = bloombergSecurityNames;
+            fieldNames = bloombergFieldNames;
+            startDate = bloombergStartDate.ToString(BLOOMBERG_DATE_FORMAT);
+            endDate = BloombergEndDate.ToString(BLOOMBERG_DATE_FORMAT);
+            //
+            pricingOption = bloombergPricingOption;
+            periodicitySelection = bloombergPeriodicitySelection;
+            periodicityAdjustment = bloombergPeriodicityAdjustment;
+            nonTradingDayFillOption = bloombergNonTradingDayFillOption;
+            nonTradingDayFillMethod = bloombergNonTradingDayFillMethod;
+            overrideCurrency = bloombergOverrideCurrency;
+        }
+        public HistoricalDataRequest(List<string> bloombergSecurityNames, List<string> bloombergFieldNames,
+            DateTime bloombergStartDate, DateTime BloombergEndDate, List<string> bloombergOverrideFields,
+            List<string> bloombergOverrideValues,
+            E_PRICING_OPTION bloombergPricingOption = E_PRICING_OPTION.PRICING_OPTION_PRICE,
+            E_PERIODICITY_SELECTION bloombergPeriodicitySelection = E_PERIODICITY_SELECTION.DAILY,
+            E_PERIODICITY_ADJUSTMENT bloombergPeriodicityAdjustment = E_PERIODICITY_ADJUSTMENT.ACTUAL,
+            E_NON_TRADING_DAY_FILL_OPTION bloombergNonTradingDayFillOption = E_NON_TRADING_DAY_FILL_OPTION.ALL_CALENDAR_DAYS,
+            E_NON_TRADING_DAY_FILL_METHOD bloombergNonTradingDayFillMethod = E_NON_TRADING_DAY_FILL_METHOD.PREVIOUS_VALUE,
+            string bloombergOverrideCurrency = "")
+        {
+            // ctor : create historical data request with field overrides
+            requestType = REQUEST_TYPE_HISTORICAL;
+            securityNames = bloombergSecurityNames;
+            fieldNames = bloombergFieldNames;
+            overrideFields = bloombergOverrideFields;
+            overrideValues = bloombergOverrideValues;
+            startDate = bloombergStartDate.ToString(BLOOMBERG_DATE_FORMAT);
+            endDate = BloombergEndDate.ToString(BLOOMBERG_DATE_FORMAT);
+            //
+            pricingOption = bloombergPricingOption;
+            periodicitySelection = bloombergPeriodicitySelection;
+            periodicityAdjustment = bloombergPeriodicityAdjustment;
+            nonTradingDayFillOption = bloombergNonTradingDayFillOption;
+            nonTradingDayFillMethod = bloombergNonTradingDayFillMethod;
+            overrideCurrency = bloombergOverrideCurrency;
+        }
+        protected override void ProcessDataResponse(ref BBCOMM.Event response)
+        {
+            // unzip and pack messages received from BBCOMM server
+            // receive one security per message and multiple messages per event
+            foreach (BBCOMM.Message message in response.GetMessages())
+            {
+                // extract security and fields
+                BBCOMM.Element security = message.GetElement(SECURITY_DATA);
+                BBCOMM.Element fields = security.GetElement(FIELD_DATA);
+                //
+                int sequenceNumber = security.GetElementAsInt32(SEQUENCE_NUMBER);
+                int nFieldNames = fieldNames.Count;
+                int nObservationDates = fields.NumValues;
+                //
+                // the exact dimension will be known only, when the response has been received from BBCOMM server
+                if (!hasDimensions)
+                {
+                    // define result data structure dimensions for historical data request
+                    // observation date will be stored into first field for each observation date
+                    result = new dynamic[securityNames.Count, nObservationDates, fieldNames.Count + 1];
+                    hasDimensions = true;
+                }
+                //
+                // loop through all observation dates
+                for (int i = 0; i < nObservationDates; i++)
+                {
+                    // extract all field data for a single observation date
+                    BBCOMM.Element observationDateFields = fields.GetValueAsElement(i);
+                    //
+                    // pack observation date into data structure
+                    result[sequenceNumber, i, 0] = observationDateFields.GetElementAsDatetime(DATE);
+                    //
+                    // then, loop through all 'user-requested' fields for a given observation date
+                    // and pack results data into data structure
+                    for (int j = 0; j < nFieldNames; j++)
+                    {
+                        // pack field value into data structure if such value has been found
+                        if (observationDateFields.HasElement(fieldNames[j]))
+                        {
+                            result[sequenceNumber, i, j + 1] = observationDateFields.GetElement(fieldNames[j]).GetValue();
+                        }
+                        // otherwise, pack NOT_AVAILABLE string into data structure
+                        else
+                        {
+                            result[sequenceNumber, i, j + 1] = NOT_AVAILABLE;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
