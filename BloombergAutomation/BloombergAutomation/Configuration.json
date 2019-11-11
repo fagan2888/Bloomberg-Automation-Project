@@ -3,7 +3,7 @@
     "bloombergfields":[],
     "bloombergoverridefields":
     {
-        "leg1":[],
+        "leg1":{"NOTIONAL":"SW_REC_NOTL_AMT","CURRENCY":"SW_REC_"},
         "leg2":[]
     },
     "outputdatapathstart":"C:/Bloomberg/Output/"
