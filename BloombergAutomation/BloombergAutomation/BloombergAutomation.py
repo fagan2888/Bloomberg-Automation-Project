@@ -1,6 +1,10 @@
-import blpapi as blp
-##import pdblp as blp
-from optparse import OptionParser
+from __future__ import print_function
+from __future__ import absolute_import
+
+import blpapi
+import copy
+import datetime
+from optparse import OptionParser, Option, OptionValueError
 import json
 
 ##Configuration Stage
@@ -8,6 +12,74 @@ with open("Configuration.json") as json_file:
     basic_config=json.load(json_file)
 
 print(basic_config)
+
+
+def checkDateTime(option, opt, value):
+    try:
+        return datetime.datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError as ex:
+        raise OptionValueError(
+            "option {0}: invalid datetime value: {1} ({2})".format(
+                opt, value, ex))
+
+
+class ExampleOption(Option):
+    TYPES = Option.TYPES + ("datetime",)
+    TYPE_CHECKER = copy.copy(Option.TYPE_CHECKER)
+    TYPE_CHECKER["datetime"] = checkDateTime
+
+def parseCmdLine():
+    parser = OptionParser(description="Swap Manager")
+    parser.add_option("-a",
+                      "--ip",
+                      dest="host",
+                      help="server name or IP (default: %default)",
+                      metavar="ipAddress",
+                      default="localhost")
+    parser.add_option("-p",
+                      dest="port",
+                      type="int",
+                      help="server port (default: %default)",
+                      metavar="tcpPort",
+                      default=8194)
+    parser.add_option("-s",
+                      dest="security",
+                      help="security (default: %default)",
+                      metavar="security",
+                      default="IBM US Equity")
+    parser.add_option("-e",
+                      dest="event",
+                      help="event (default: %default)",
+                      metavar="event",
+                      default="TRADE")
+    parser.add_option("-b",
+                      dest="barInterval",
+                      type="int",
+                      help="bar interval (default: %default)",
+                      metavar="barInterval",
+                      default=60)
+    parser.add_option("--sd",
+                      dest="startDateTime",
+                      type="datetime",
+                      help="start date/time (default: %default)",
+                      metavar="startDateTime",
+                      default=datetime.datetime(2008, 8, 11, 15, 30, 0))
+    parser.add_option("--ed",
+                      dest="endDateTime",
+                      type="datetime",
+                      help="end date/time (default: %default)",
+                      metavar="endDateTime",
+                      default=datetime.datetime(2008, 8, 11, 15, 35, 0))
+    parser.add_option("-g",
+                      dest="gapFillInitialBar",
+                      help="gapFillInitialBar",
+                      action="store_true",
+                      default=False)
+
+    (options, args) = parser.parse_args()
+
+    return options
+
 
 
 def printErrorInfo(leadingStr, errorInfo):
