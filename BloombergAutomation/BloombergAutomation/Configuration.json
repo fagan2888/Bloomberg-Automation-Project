@@ -1,10 +1,33 @@
 {
     "sourcedatapathstart":"C:/Bloomberg/Input/",
-    "bloombergfields":[],
-    "bloombergoverridefields":
+    "Prerun":
     {
-        "leg1":{"NOTIONAL":"SW_REC_NOTL_AMT","CURRENCY":"SW_REC_"},
-        "leg2":[]
+        "Swap Curve Date":"SW_CURVE_DT",
+        "Valuation Date":"",
+        "FX Rate":"SW_EXCH_RT"
+    },
+    "Inrun":
+    {
+        "leg1":{
+            "Notional":"SW_REC_NOTL_AMT",
+            "Currency":"SW_REC_CRNCY",
+            "Effective Date":"",
+            "Maturity Date":"",
+            "Coupon":"",
+            "Payment Frequency":"SW_REC_FREQ",
+            "Day Count":"",
+            "Calc Basis":""
+        },
+        "leg2":{
+            "Notional":"SW_PAY_NOTL_AMT",
+            "Currency":"SW_PAY_CRNCY",
+            "Effective Date":"",
+            "Maturity Date":"",
+            "Coupon":"",
+            "Payment Frequency":"SW_PAY_FREQ",
+            "Day Count":"",
+            "Calc Basis":""
+        }
     },
     "outputdatapathstart":"C:/Bloomberg/Output/"
 }
