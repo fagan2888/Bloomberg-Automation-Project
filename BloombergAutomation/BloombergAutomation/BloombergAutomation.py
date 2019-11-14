@@ -29,7 +29,12 @@ class ExampleOption(Option):
     TYPE_CHECKER["datetime"] = checkDateTime
 
 def parseCmdLine():
-    parser = OptionParser(description="Swap Manager")
+    parser = OptionParser(description="Swap Manager Scraper",
+                          epilog="Notes: " +
+                          "1) All times are in GMT. " +
+                          "2) Only one security can be specified. " +
+                          "3) Only one event can be specified.",
+                          option_class=ExampleOption)
     parser.add_option("-a",
                       "--ip",
                       dest="host",
@@ -79,7 +84,6 @@ def parseCmdLine():
     (options, args) = parser.parse_args()
 
     return options
-
 
 
 def printErrorInfo(leadingStr, errorInfo):
