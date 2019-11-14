@@ -3,30 +3,34 @@
     "Prerun":
     {
         "Swap Curve Date":"SW_CURVE_DT",
-        "Valuation Date":"",
+        "Settlement Date": "SW_EFF_DT",
+        "Collateral Currency": "COLLATERAL_CURRENCY",
         "FX Rate":"SW_EXCH_RT"
     },
     "Inrun":
     {
-        "leg1":{
-            "Notional":"SW_REC_NOTL_AMT",
-            "Currency":"SW_REC_CRNCY",
-            "Effective Date":"",
-            "Maturity Date":"",
-            "Coupon":"",
-            "Payment Frequency":"SW_REC_FREQ",
-            "Day Count":"",
-            "Calc Basis":""
+        "leg1": 
+        {
+            "Notional": "SW_REC_NOTL_AMT",
+            "Currency": "SW_REC_CRNCY",
+            "Effective Date": "SW_REC_EFF_DT",
+            "Maturity Date": "SW_REC_MATURITY_DT",
+            "Coupon": "SW_REC_CPN",
+            "Payment Frequency": "SW_REC_FREQ",
+            "Day Count": "SW_REC_DAY_CNT",
+            "Calc Basis": "CALC_BASIS_REC_FIX",
+            "Cash Flow": "SW_REC_CASH_FLOW"
         },
-        "leg2":{
-            "Notional":"SW_PAY_NOTL_AMT",
-            "Currency":"SW_PAY_CRNCY",
-            "Effective Date":"",
-            "Maturity Date":"",
-            "Coupon":"",
-            "Payment Frequency":"SW_PAY_FREQ",
-            "Day Count":"",
-            "Calc Basis":""
+        "leg2": {
+            "Notional": "SW_PAY_NOTL_AMT",
+            "Currency": "SW_PAY_CRNCY",
+            "Effective Date": "SW_PAY_EFF_DT",
+            "Maturity Date": "SW_PAY_MATURITY_DT",
+            "Coupon": "SW_PAY_CPN",
+            "Payment Frequency": "SW_PAY_FREQ",
+            "Day Count": "SW_PAY_DAY_CNT",
+            "Calc Basis": "CALC_BASIS_PAY_FIX",
+            "Cash Flow": "SW_PAY_CASH_FLOW"
         }
     },
     "outputdatapathstart":"C:/Bloomberg/Output/"
